@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>7805 + 7905 → Real Physical Output Dekho!</title>
+<style>
+  body {background:#2c3e50; color:white; font-family:Arial; padding:20px;}
+  .lab {width:1100px; margin:auto; background:#34495e; padding:30px; border-radius:20px;}
+  h1 {text-align:center; color:#e74c3c;}
+  .row {display:flex; justify-content:space-around; margin:40px 0;}
+  .box {background:#223; padding:25px; border-radius:15px; width:500px; text-align:center;}
+  .ic {font-size:70px; background:black; color:lime; padding:15px 40px; border-radius:12px; display:inline-block;}
+  .slider {width:400px; height:15px; border-radius:10px;}
+  .vol {font-size:40px; font-weight:bold;}
+  .pos {color:#e74c3c;}
+  .neg {color:#3498db;}
+  .status {font-size:24px; margin:15px; height:40px;}
+
+  /* Physical Outputs */
+  .output-area {display:flex; justify-content:space-around; margin-top:30px;}
+  .motor {width:120px; height:120px; background:#ddd; border-radius:50%; position:relative; overflow:hidden;}
+  .fan {width:100%; height:100%; background:linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%); background-size:30px 30px; animation:spin 0.6s linear infinite paused;}
+  @keyframes spin {from{0% {transform:rotate(0deg)} 100% {transform:rotate(360deg)}}}
+
+  .servo {width:180px; height:100px; background:#111; border-radius:10px; position:relative;}
+  .arm {width:140px; height:12px; background:#f1c40f; position:absolute; top:44px; left:20px; transform-origin:left center; transition:0.4s; background:linear-gradient(#f1c40f, #e67e22);}
+
+  .rgb {width:80px; height:80px; background:#000; border-radius:50%; box-shadow:0 0 30px #fff; animation:glow 2s infinite alternate paused;}
+  @keyframes glow {
+    0%   {box-shadow:0 0 30px #f00;}
+    33%  {box-shadow:0 0 40px #0f0;}
+    66%  {box-shadow:0 0 40px #00f;}
+    100% {box-shadow:0 0 50px #fff;}
+  }
+
+  .buzzer {font-size:60px; display:none;}
+</style>
+</head>
+<body>
+
+<div class="lab">
+  <h1>7805 + 7905 → Real Physical Output</h1>
+
+  <div class="row">
+    <!-- 7805 -->
+    <div class="box">
+      <div class="ic">7805</div>
+      <div class="vol">Input <span class="pos" id="in78">+12.0</span>V → Output <span class="pos" id="out78">+5.00</span>V</div>
+      <input type="range" class="slider" id="vin78" min="-15" max="35" value="12" step="0.1">
+      <div class="status" id="s78">Perfect – +5V stable</div>
+
+      <div class="output-area">
+        <div>
+          <div class="motor"><div class="fan" id="fan"></div></div>
+          <br>DC Motor (5V Fan)
+        </div>
+        <div class="rgb" id="rgb"></div>
+      </div>
+    </div>
+
+    <!-- 7905 -->
+    <div class="box">
+      <div class="ic">7905V</div>
+      <div class="vol">Input <span class="neg" id="in79">-12.0</span>V → Output <span class="neg" id="out79">-5.00</span>V</div>
+      <input type="range" class="slider" id="vin79" min="-35" max="15" value="-12" step="0.1">
+      <div class="status" id="s79">Perfect – -5V stable</div>
+
+      <div class="output-area">
+        <div class="servo" id="servo">
+          <div class="arm" id="servoArm"></div>
+        </div>
+        <div class="buzzer" id="buzzer">Buzzer</div>
+      </div>
+    </div>
+  </div>
+
+  <h2 style="text-align:center; font-size:50px;" id="finalMsg">Dono sahi → sab kuch chal raha hai!</h2>
+</div>
+
+<script>
+let good78 = true, good79 = true;
+
+function check78() {
+  let v = parseFloat(document.getElementById("vin78").value);
+  document.getElementById("in78").innerText = v.toFixed(1);
+
+  if (v >= 7 && v <= 30) {
+    document.getElementById("out78").innerText = "+5.00";
+    document.getElementById("s78").style.color = "lime";
+    document.getElementById("s78").innerText = "Perfect – +5V stable";
+    document.getElementById("fan").style.animationPlayState = "running";
+    good78 = true;
+  } else {
+    document.getElementById("out78").innerText = (v<0)?"JAL GAYA":"0.0";
+    document.getElementById("s78").style.color = "red";
+    document.getElementById("s78").innerText = (v<0)?"Negative voltage → IC kharab":"Input kam";
+    document.getElementById("fan").style.animationPlayState = "paused";
+    good78 = false;
+  }
+  updateFinal();
+}
+
+function check79() {
+  let v = parseFloat(document.getElementById("vin79").value);
+  document.getElementById("in79").innerText = v.toFixed(1);
+
+  if (v <= -8 && v >= -30) {
+    document.getElementById("out79").innerText = "-5.00";
+    document.getElementById("s79").style.color = "lime";
+    document.getElementById("s79").innerText = "Perfect – -5V stable";
+    document.getElementById("servoArm").style.transform = "rotate(0deg)";
+    setTimeout(()=>document.getElementById("servoArm").style.transform = "rotate(180deg)", 800);
+    setTimeout(()=>document.getElementById("servoArm").style.transform = "rotate(0deg)", 1600);
+    good79 = true;
+  } else {
+    document.getElementById("out79").innerText = (v>0)?"JAL GAYA":"0.0";
+    document.getElementById("s79").style.color = "red";
+    document.getElementById("servoArm").style.transform = "rotate(90deg)";
+    good79 = false;
+  }
+  updateFinal();
+}
+
+function updateFinal() {
+  if (good78 && good79) {
+    document.getElementById("rgb").style.animationPlayState = "running";
+    document.getElementById("finalMsg").style.color = "lime";
+    document.getElementById("finalMsg").innerText = "Perfect ±5V → Motor, Servo, RGB sab chal rahe hain!";
+    document.getElementById("buzzer").style.display = "none";
+  } else {
+    document.getElementById("rgb").style.animationPlayState = "paused";
+    document.getElementById("finalMsg").style.color = "red";
+    document.getElementById("finalMsg").innerText = "Galti → kuch band ho gaya!";
+    document.getElementById("buzzer").style.display = "block";
+  }
+}
+
+document.getElementById("vin78").oninput = check78;
+document.getElementById("vin79").oninput = check79;
+
+check78(); check79();
+</script>
+
+</body>
+</html>
