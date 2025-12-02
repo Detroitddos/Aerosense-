@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AeroSense: Obstacle Run,sim1</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', monospace; user-select: none; touch-action: none; }
+
+        /* --- HUD --- */
+        #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        
+        .top-bar {
+            position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between;
+        }
+        .panel {
+            background: rgba(0, 20, 30, 0.9); border: 1px solid #00f0ff; padding: 8px 12px;
+            color: #fff; border-radius: 6px; font-weight: bold; font-size: 14px;
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+        }
+        .score-val { font-size: 20px; color: #00f0ff; }
+        .danger { color: #ff0000; text-shadow: 0 0 5px red; animation: blink 0.5s infinite; }
+
+        @keyframes blink { 50% { opacity: 0.5; } }
+
+        /* --- CONTROLS --- */
+        #joystick-area {
+            position: absolute; bottom: 40px; left: 40px;
+            width: 140px; height: 140px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(0, 255, 0, 0.3);
+            border-radius: 50%; pointer-events: auto;
+        }
+        #knob {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 60px; height: 60px; background: rgba(0, 255, 0, 0.5);
+            border: 2px solid #fff; border-radius: 50%;
+            box-shadow: 0 0 15px #0f0;
+        }
+
+        /* Action Buttons */
+        .btn-container {
+            position: absolute; bottom: 40px; right: 40px;
+            display: flex; flex-direction: column; gap: 20px; pointer-events: auto;
+        }
+        .game-btn {
+            width: 140px; height: 60px; border-radius: 30px; font-size: 14px; font-weight: bold;
+            color: white; border: 2px solid #fff; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; text-transform: uppercase; transition: 0.1s;
+        }
+        .game-btn:active { transform: scale(0.95); }
+
+        #btn-wind { background: rgba(100, 0, 0, 0.6); border-color: red; color: red; }
+        #btn-wind.active { background: red; color: white; box-shadow: 0 0 20px red; }
+
+        #btn-pid { background: rgba(0, 100, 0, 0.6); border-color: lime; color: lime; }
+        #btn-pid.active { background: lime; color: black; box-shadow: 0 0 20px lime; }
+
+        /* Crash Screen */
+        #crash-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(50, 0, 0, 0.9); display: none;
+            flex-direction: column; align-items: center; justify-content: center;
+            z-index: 100; pointer-events: auto;
+        }
+        h1 { font-size: 40px; color: red; border: 4px solid red; padding: 20px; background: black; text-transform: uppercase; text-align: center; }
+        button.retry {
+            margin-top: 20px; padding: 15px 40px; font-size: 18px;
+            background: white; border: none; border-radius: 30px; font-weight: bold;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <div class="top-bar">
+            <div class="panel">DISTANCE: <span id="score" class="score-val">0m</span></div>
+            <div class="panel" style="text-align: right;">
+                MODE: <span id="mode-status" style="color: lime;">AEROSENSE</span>
+            </div>
+        </div>
+
+        <div id="joystick-area">
+            <div id="knob"></div>
+        </div>
+
+        <div class="btn-container">
+            <div id="btn-wind" class="game-btn">⚠️ WIND (HOLD)</div>
+            <div id="btn-pid" class="game-btn active">🛡️ AUTO-PILOT</div>
+        </div>
+    </div>
+
+    <div id="crash-screen">
+        <h1>SYSTEM DESTROYED</h1>
+        <div style="color: white; margin-bottom: 20px;">You hit an obstacle!</div>
+        <button class="retry" onclick="resetGame()">REBOOT DRONE</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let width, height;
+        
+        // --- GAME STATE ---
+        let windActive = false;
+        let pidActive = true;
+        let isCrashed = false;
+        let distance = 0;
+        let frame = 0;
+        let speed = 15; // Forward speed simulation
+
+        // Drone State
+        const drone = {
+            x: 0, // -1 (Left) to 1 (Right)
+            y: 0, // -1 (Up) to 1 (Down) -> Changed logic: -1 is UP now visually
+            tilt: 0
+        };
+
+        // Input
+        const input = { x: 0, y: 0 };
+
+        // Objects (Buildings/Trees)
+        let obstacles = [];
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- CONTROLS (JOYSTICK) ---
+        const joyZone = document.getElementById('joystick-area');
+        const knob = document.getElementById('knob');
+        let joyId = null;
+        let startX, startY;
+
+        joyZone.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const touch = e.changedTouches[0];
+            joyId = touch.identifier;
+            const rect = joyZone.getBoundingClientRect();
+            // Center of joystick
+            const cx = rect.left + rect.width/2;
+            const cy = rect.top + rect.height/2;
+            updateJoystick(touch.clientX, touch.clientY, cx, cy);
+        }, {passive: false});
+
+        joyZone.addEventListener('touchmove', e => {
+            e.preventDefault();
+            for(let i=0; i<e.changedTouches.length; i++) {
+                if(e.changedTouches[i].identifier === joyId) {
+                    const touch = e.changedTouches[i];
+                    const rect = joyZone.getBoundingClientRect();
+                    const cx = rect.left + rect.width/2;
+                    const cy = rect.top + rect.height/2;
+                    updateJoystick(touch.clientX, touch.clientY, cx, cy);
+                }
+            }
+        }, {passive: false});
+
+        const endJoy = () => {
+            joyId = null;
+            input.x = 0; input.y = 0;
+            knob.style.transform = `translate(-50%, -50%)`;
+        };
+        joyZone.addEventListener('touchend', endJoy);
+        
+        // Mouse fallback for PC testing
+        let mouseDown = false;
+        joyZone.addEventListener('mousedown', () => mouseDown = true);
+        window.addEventListener('mouseup', () => { mouseDown = false; endJoy(); });
+        window.addEventListener('mousemove', e => {
+            if(mouseDown) {
+                const rect = joyZone.getBoundingClientRect();
+                const cx = rect.left + rect.width/2;
+                const cy = rect.top + rect.height/2;
+                updateJoystick(e.clientX, e.clientY, cx, cy);
+            }
+        });
+
+        function updateJoystick(x, y, cx, cy) {
+            let dx = x - cx;
+            let dy = y - cy;
+            
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const maxDist = 50;
+
+            if(dist > maxDist) {
+                dx = (dx/dist) * maxDist;
+                dy = (dy/dist) * maxDist;
+            }
+
+            knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+            // Mapping Input
+            // Sensitivity control: 
+            input.x = dx / maxDist; 
+            input.y = dy / maxDist; // Positive is Down, Negative is Up
+        }
+
+        // --- BUTTONS ---
+        const btnWind = document.getElementById('btn-wind');
+        const btnPid = document.getElementById('btn-pid');
+
+        const setWind = (state) => {
+            windActive = state;
+            btnWind.className = state ? 'game-btn active' : 'game-btn';
+        };
+        btnWind.addEventListener('touchstart', (e) => { e.preventDefault(); setWind(true); });
+        btnWind.addEventListener('touchend', (e) => { e.preventDefault(); setWind(false); });
+        btnWind.addEventListener('mousedown', () => setWind(true));
+        btnWind.addEventListener('mouseup', () => setWind(false));
+
+        btnPid.addEventListener('click', () => {
+            pidActive = !pidActive;
+            btnPid.className = pidActive ? 'game-btn active' : 'game-btn';
+            btnPid.innerText = pidActive ? "🛡️ AUTO-PILOT" : "⚠️ MANUAL";
+            const status = document.getElementById('mode-status');
+            status.innerText = pidActive ? "AEROSENSE" : "MANUAL";
+            status.style.color = pidActive ? "lime" : "red";
+        });
+
+        // --- GAME LOGIC ---
+        function spawnObstacle() {
+            // Randomly spawn Buildings or Pipes
+            const type = Math.random() > 0.5 ? 'building' : 'tower';
+            // Spawn far away (z = 100), random X (-2 to 2)
+            obstacles.push({
+                x: (Math.random() - 0.5) * 4, 
+                y: (Math.random() - 0.5) * 2, // Some height variation
+                z: 2000, // Far away
+                type: type,
+                color: type === 'building' ? '#0044ff' : '#ff00ff'
+            });
+        }
+
+        function resetGame() {
+            isCrashed = false;
+            obstacles = [];
+            distance = 0;
+            drone.x = 0; drone.y = 0;
+            document.getElementById('crash-screen').style.display = 'none';
+        }
+
+        function update() {
+            if(isCrashed) return;
+            
+            frame++;
+            distance += 1;
+            document.getElementById('score').innerText = Math.floor(distance) + "m";
+
+            // Spawn obstacles
+            if(frame % 60 === 0) spawnObstacle();
+
+            // 1. DRONE PHYSICS (Smooth Movement)
+            // Sensitivity: Multiplier 0.03 is slower, 0.08 is faster
+            const sensitivity = 0.03; 
+            
+            drone.x += input.x * sensitivity;
+            drone.y += input.y * sensitivity; 
+
+            // Tilt visual
+            drone.tilt = input.x * 0.5;
+
+            // Clamp position (Don't go off screen)
+            if(drone.x > 1.2) drone.x = 1.2;
+            if(drone.x < -1.2) drone.x = -1.2;
+            if(drone.y > 1) drone.y = 1;
+            if(drone.y < -1) drone.y = -1;
+
+            // 2. WIND LOGIC
+            if(windActive) {
+                const turbulence = pidActive ? 0.005 : 0.04; 
+                drone.x += (Math.random()-0.5) * turbulence * 2;
+                drone.y += (Math.random()-0.5) * turbulence * 2;
+
+                if(!pidActive) {
+                    // Strong push if manual
+                    drone.x += 0.01;
+                    drone.tilt += (Math.random()-0.5) * 0.2;
+                }
+            }
+
+            // 3. PID Correction
+            if(pidActive) {
+                // Auto-center slightly if no input
+                if(Math.abs(input.x) < 0.1) drone.x *= 0.98;
+                // Stabilize tilt
+                drone.tilt *= 0.9;
+            }
+
+            // 4. OBSTACLE UPDATE & COLLISION
+            for(let i = obstacles.length - 1; i >= 0; i--) {
+                let ob = obstacles[i];
+                ob.z -= speed; // Move towards player
+
+                // Collision Check
+                // If object is close (z < 100) and x/y overlap
+                if(ob.z < 100 && ob.z > 0) {
+                    // Simple box collision
+                    if(Math.abs(drone.x - ob.x) < 0.3 && Math.abs(drone.y - ob.y) < 0.4) {
+                        isCrashed = true;
+                        document.getElementById('crash-screen').style.display = 'flex';
+                    }
+                }
+
+                if(ob.z < -100) obstacles.splice(i, 1);
+            }
+        }
+
+        // --- DRAWING (3D PROJECTION) ---
+        function project(x, y, z) {
+            const fov = 500;
+            const scale = fov / (fov + z);
+            const x2d = width/2 + x * scale * 300;
+            const y2d = height/2 + y * scale * 200;
+            return { x: x2d, y: y2d, s: scale };
+        }
+
+        function draw() {
+            // Sky Gradient
+            const grad = ctx.createLinearGradient(0, 0, 0, height);
+            grad.addColorStop(0, '#000510');
+            grad.addColorStop(1, '#001');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, width, height);
+
+            // Grid Floor
+            ctx.strokeStyle = pidActive ? '#003300' : '#330000';
+            ctx.lineWidth = 2;
+            const speedOffset = (distance * 10) % 200;
+            
+            for(let i=0; i<10; i++) { // Floor lines
+                let z = 100 + (i*200) - speedOffset;
+                if(z < 10) continue;
+                let p1 = project(-2, 1.5, z);
+                let p2 = project(2, 1.5, z);
+                ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            }
+
+            // --- DRAW OBSTACLES ---
+            // Sort by depth (Painter's Algorithm) so far objects draw first
+            obstacles.sort((a, b) => b.z - a.z);
+
+            obstacles.forEach(ob => {
+                let p = project(ob.x, ob.y, ob.z);
+                let size = 100 * p.s;
+                
+                ctx.fillStyle = ob.z < 500 ? ob.color : '#333'; // Fade in
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+
+                if(ob.type === 'building') {
+                    ctx.fillRect(p.x - size/2, p.y - size, size, size*2);
+                    ctx.strokeRect(p.x - size/2, p.y - size, size, size*2);
+                } else {
+                    // Tower
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y - size*1.5);
+                    ctx.lineTo(p.x - size/2, p.y + size);
+                    ctx.lineTo(p.x + size/2, p.y + size);
+                    ctx.closePath();
+                    ctx.fill(); ctx.stroke();
+                }
+            });
+
+            // --- DRAW DRONE ---
+            const dP = project(drone.x, drone.y, 100); // Drone is always at Z=100 visually
+            const scale = 1.5;
+
+            ctx.save();
+            ctx.translate(dP.x, dP.y);
+            ctx.rotate(drone.tilt);
+            ctx.scale(scale, scale);
+
+            // Shield
+            if(pidActive) {
+                ctx.strokeStyle = `rgba(0, 255, 0, ${0.3 + Math.random()*0.2})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI*2); ctx.stroke();
+                
+                // Lasers
+                ctx.strokeStyle = 'lime';
+                ctx.setLineDash([5, 10]);
+                ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-100, 200); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(100, 200); ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Dragonfly Body
+            ctx.fillStyle = pidActive ? '#0f0' : '#f00';
+            
+            // Wings Flap
+            const flap = Math.sin(frame * 0.8) * 15;
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.3)';
+            ctx.strokeStyle = '#0ff';
+            
+            // Left Wing
+            ctx.beginPath(); ctx.moveTo(0,0); 
+            ctx.quadraticCurveTo(-50, -30+flap, -80, -10); 
+            ctx.quadraticCurveTo(-40, 20, 0, 10); 
+            ctx.fill(); ctx.stroke();
+
+            // Right Wing
+            ctx.beginPath(); ctx.moveTo(0,0); 
+            ctx.quadraticCurveTo(50, -30+flap, 80, -10); 
+            ctx.quadraticCurveTo(40, 20, 0, 10); 
+            ctx.fill(); ctx.stroke();
+
+            // Body Core
+            ctx.fillStyle = '#fff';
+            ctx.beginPath(); ctx.arc(0, -10, 8, 0, Math.PI*2); ctx.fill(); // Head
+            ctx.fillStyle = pidActive ? '#0f0' : '#f00';
+            ctx.beginPath(); ctx.ellipse(0, 20, 4, 25, 0, 0, Math.PI*2); ctx.fill(); // Tail
+
+            ctx.restore();
+
+            update();
+            requestAnimationFrame(draw);
+        }
+
+        draw();
+
+    </script>
+</body>
+</html>
+
