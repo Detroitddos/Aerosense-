@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AeroSense: Simulation-2</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #050505;
+            font-family: 'Segoe UI', 'Roboto', monospace;
+            overflow: hidden;
+            user-select: none;
+            cursor: crosshair;
+        }
+
+        /* --- HUD LAYOUT --- */
+        #hud-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Top Bar */
+        #top-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .panel {
+            background: rgba(0, 15, 25, 0.9);
+            border: 1px solid rgba(0, 240, 255, 0.4);
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.1);
+            padding: 15px 20px;
+            border-radius: 6px;
+            backdrop-filter: blur(4px);
+            min-width: 150px;
+        }
+
+        .panel h3 {
+            margin: 0 0 5px 0;
+            font-size: 11px;
+            color: #88aaff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .data-value {
+            font-size: 20px;
+            font-weight: 800;
+            color: #fff;
+            font-family: 'Consolas', monospace;
+        }
+
+        .status-box {
+            text-align: right;
+            border-right: 4px solid #ff3333;
+        }
+
+        .status-box.active {
+            border-right: 4px solid #33ff33;
+        }
+
+        /* --- CONTROLS UI --- */
+        #controls-container {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 20;
+            pointer-events: auto;
+        }
+
+        .control-btn {
+            background: linear-gradient(180deg, #1a2a3a 0%, #0a1015 100%);
+            border: 2px solid #00f0ff;
+            color: #00f0ff;
+            padding: 15px 30px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            text-transform: uppercase;
+            border-radius: 4px;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);
+            transition: all 0.1s ease;
+            min-width: 200px;
+            text-align: center;
+        }
+
+        .control-btn:hover {
+            background: #002f3f;
+            box-shadow: 0 0 30px rgba(0, 240, 255, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .control-btn:active {
+            transform: scale(0.98);
+        }
+
+        /* State Styles */
+        .btn-wind.active {
+            background: linear-gradient(180deg, #501010 0%, #300505 100%);
+            border-color: #ff3333;
+            color: #ff3333;
+            box-shadow: 0 0 30px rgba(255, 50, 50, 0.5);
+        }
+
+        .btn-pid.active {
+            background: linear-gradient(180deg, #105020 0%, #053010 100%);
+            border-color: #33ff33;
+            color: #33ff33;
+            box-shadow: 0 0 30px rgba(50, 255, 50, 0.5);
+        }
+
+        /* Warnings */
+        #warning-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 32px;
+            font-weight: 900;
+            color: #ff3333;
+            text-shadow: 0 0 20px red;
+            display: none;
+            border: 4px solid red;
+            padding: 20px 40px;
+            background: rgba(0,0,0,0.8);
+            text-transform: uppercase;
+        }
+
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="hud-container">
+        <div id="top-bar">
+            <div class="panel">
+                <h3>System Mode</h3>
+                <div id="mode-display" class="data-value" style="color: #ff3333;">MANUAL PILOT</div>
+            </div>
+            
+            <div class="panel">
+                <h3>Lidar Distance</h3>
+                <div style="display:flex; justify-content:space-between; width:120px;">
+                    <span style="font-size:12px; color:#888;">TOP</span>
+                    <span id="dist-top" style="color:#fff;">--</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; width:120px;">
+                    <span style="font-size:12px; color:#888;">BTM</span>
+                    <span id="dist-btm" style="color:#fff;">--</span>
+                </div>
+            </div>
+
+            <div class="panel status-box" id="status-panel">
+                <h3>Environment</h3>
+                <div id="wind-status" class="data-value" style="color: #00f0ff;">CALM</div>
+            </div>
+        </div>
+
+        <div id="warning-msg">CRITICAL COLLISION!</div>
+    </div>
+
+    <div id="controls-container">
+        <button id="btn-wind" class="control-btn btn-wind" 
+                onmousedown="setWind(true)" onmouseup="setWind(false)" onmouseleave="setWind(false)"
+                ontouchstart="setWind(true)" ontouchend="setWind(false)">
+            ⚠️ Hold for Wind
+        </button>
+        <button id="btn-pid" class="control-btn btn-pid" onclick="togglePID()">
+            🛡️ Toggle AeroSense (Space)
+        </button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- CONFIG ---
+        let width, height;
+        let windActive = false;
+        let pidActive = false;
+        let time = 0;
+        
+        // Physics Vars
+        const drone = { 
+            x: 200, 
+            y: 300, 
+            vy: 0, 
+            targetY: 300, 
+            angle: 0 
+        };
+        
+        // Mouse/Input Target
+        let inputY = 300; 
+
+        // Environment
+        let pipeTop = [];
+        let pipeBottom = [];
+        const segWidth = 10;
+        let particles = [];
+        let collision = false;
+
+        // Init
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            drone.y = height/2;
+            inputY = height/2;
+            initPipe();
+        }
+        window.addEventListener('resize', resize);
+        
+        // --- IMPROVED MOUSE HANDLING ---
+        // Drone follows mouse smoothly in manual mode
+        window.addEventListener('mousemove', e => {
+            inputY = e.clientY;
+        });
+        window.addEventListener('touchmove', e => {
+            inputY = e.touches[0].clientY;
+            e.preventDefault();
+        }, {passive: false});
+
+        // Keyboard Shortcuts
+        window.addEventListener('keydown', e => {
+            if(e.code === 'Space') togglePID();
+        });
+
+        function initPipe() {
+            pipeTop = [];
+            pipeBottom = [];
+            let h = 100; // Starting wall thickness
+            // Fill initial buffer
+            for(let i=0; i<width/segWidth + 20; i++) {
+                pipeTop.push(h);
+                pipeBottom.push(height - h);
+            }
+        }
+        resize();
+
+        // --- CONTROLS LOGIC ---
+        function setWind(state) {
+            windActive = state;
+            const btn = document.getElementById('btn-wind');
+            const status = document.getElementById('wind-status');
+            
+            if(state) {
+                btn.classList.add('active');
+                status.innerText = "TURBULENCE";
+                status.style.color = "#ff3333";
+            } else {
+                btn.classList.remove('active');
+                status.innerText = "CALM";
+                status.style.color = "#00f0ff";
+            }
+        }
+
+        function togglePID() {
+            pidActive = !pidActive;
+            const btn = document.getElementById('btn-pid');
+            const display = document.getElementById('mode-display');
+            const panel = document.getElementById('status-panel');
+
+            if(pidActive) {
+                btn.classList.add('active');
+                btn.innerText = "🛡️ AEROSENSE: ON";
+                display.innerText = "AUTO-PILOT (PID)";
+                display.style.color = "#33ff33";
+                panel.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+                btn.innerText = "🛡️ TOGGLE AEROSENSE (SPACE)";
+                display.innerText = "MANUAL PILOT";
+                display.style.color = "#ff3333";
+                panel.classList.remove('active');
+                // Reset input to current pos to prevent jump
+                inputY = drone.y; 
+            }
+        }
+
+        // --- CORE PHYSICS LOOP ---
+        function updatePhysics() {
+            time++;
+
+            // 1. GENERATE PIPELINE
+            let lastTop = pipeTop[pipeTop.length-1];
+            // Make pipe curvy but safe enough to fly
+            let change = Math.sin(time * 0.03) * 3 + (Math.random() - 0.5) * 5;
+            let newTop = Math.max(50, Math.min(height/2 - 80, lastTop + change));
+            
+            pipeTop.shift(); pipeTop.push(newTop);
+            pipeBottom.shift(); pipeBottom.push(height - newTop);
+
+            // 2. DRONE LOGIC
+            if(pidActive) {
+                // --- AEROSENSE LOGIC (PID) ---
+                // Calculate center of pipe at drone's X position
+                let idx = Math.floor(drone.x / segWidth);
+                let safeCenter = (height - pipeBottom[idx] + pipeTop[idx]) / 2 + (height - pipeBottom[idx]); 
+                // Wait, coordinate system: 0 is top.
+                // Top wall Y = pipeTop[idx]. Bottom wall Y = pipeBottom[idx].
+                // Actually pipeTop array stores "height from top", pipeBottom array stores "Y position of bottom wall"
+                
+                let wTop = pipeTop[idx];
+                let wBot = pipeBottom[idx];
+                let target = (wTop + wBot) / 2;
+
+                // Simple P-Controller (Spring force to center)
+                let error = target - drone.y;
+                drone.vy = error * 0.08; // Reaction speed
+
+                // Wind Resistance (PID fights back)
+                if(windActive) {
+                    // Small jitter to show it's working hard
+                    drone.y += (Math.random() - 0.5) * 4;
+                    drone.angle = (Math.random() - 0.5) * 0.1;
+                } else {
+                    drone.angle = drone.vy * 0.02; // Bank into turn
+                }
+
+            } else {
+                // --- MANUAL MODE (Physics) ---
+                // Follow mouse input but with inertia (lag)
+                let force = (inputY - drone.y) * 0.05; // Weak motor
+                drone.vy = force;
+
+                // WIND EFFECT (The Killer)
+                if(windActive) {
+                    // Wind pushes drone DOWN hard and Randomly
+                    drone.vy += (Math.random() * 5) + 2; // Downward gust
+                    drone.angle = (Math.random() - 0.5) * 1.5; // Unstable rotation
+                } else {
+                    drone.angle = drone.vy * 0.03;
+                }
+            }
+
+            // Apply Velocity
+            drone.y += drone.vy;
+
+            // 3. COLLISION DETECTION
+            let dIdx = Math.floor(drone.x / segWidth);
+            let ceil = pipeTop[dIdx];
+            let floor = pipeBottom[dIdx];
+            
+            if(drone.y < ceil + 15 || drone.y > floor - 15) {
+                collision = true;
+                document.getElementById('warning-msg').style.display = 'block';
+                canvas.style.opacity = '0.5';
+            } else {
+                collision = false;
+                document.getElementById('warning-msg').style.display = 'none';
+                canvas.style.opacity = '1';
+            }
+
+            // UI Updates
+            document.getElementById('dist-top').innerText = Math.round(drone.y - ceil) + "px";
+            document.getElementById('dist-btm').innerText = Math.round(floor - drone.y) + "px";
+        }
+
+        // --- DRAWING LOOP ---
+        function draw() {
+            ctx.fillStyle = '#05080a';
+            ctx.fillRect(0, 0, width, height);
+
+            // 1. Draw Pipe
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            for(let i=0; i<pipeTop.length; i++) ctx.lineTo(i*segWidth, pipeTop[i]);
+            ctx.lineTo(width, 0);
+            ctx.fillStyle = '#111';
+            ctx.fill();
+            // Neon Line Top
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(0, height);
+            for(let i=0; i<pipeBottom.length; i++) ctx.lineTo(i*segWidth, pipeBottom[i]);
+            ctx.lineTo(width, height);
+            ctx.fillStyle = '#111';
+            ctx.fill();
+            // Neon Line Bottom
+            ctx.stroke();
+
+            // 2. Draw Wind Particles
+            if(windActive) {
+                for(let i=0; i<5; i++) {
+                    particles.push({x: width, y: Math.random()*height, speed: 20+Math.random()*10});
+                }
+            }
+            ctx.fillStyle = 'rgba(200, 200, 200, 0.5)';
+            for(let i=particles.length-1; i>=0; i--) {
+                let p = particles[i];
+                p.x -= p.speed;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI*2); ctx.fill();
+                if(p.x < 0) particles.splice(i,1);
+            }
+
+            // 3. Draw Drone
+            ctx.save();
+            ctx.translate(drone.x, drone.y);
+            ctx.rotate(drone.angle);
+
+            // AEROSENSE VISUALS (Lasers)
+            if(pidActive) {
+                // Scanners
+                ctx.beginPath();
+                ctx.moveTo(0,0); ctx.lineTo(0, -500);
+                ctx.moveTo(0,0); ctx.lineTo(0, 500);
+                ctx.strokeStyle = 'rgba(50, 255, 50, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // Safety Bubble
+                ctx.beginPath();
+                ctx.arc(0,0, 40, 0, Math.PI*2);
+                ctx.strokeStyle = 'rgba(50, 255, 50, 0.3)';
+                ctx.stroke();
+            }
+
+            // Body
+            ctx.fillStyle = pidActive ? '#33ff33' : '#00f0ff';
+            ctx.beginPath(); ctx.ellipse(0, 0, 20, 8, 0, 0, Math.PI*2); ctx.fill();
+            
+            // Wings (Flapping)
+            let flap = Math.sin(time * 0.5) * 20;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.strokeStyle = '#fff';
+            
+            // Left Wing
+            ctx.beginPath();
+            ctx.moveTo(5, -5); ctx.lineTo(10, -50 + flap); ctx.lineTo(30, -5);
+            ctx.fill(); ctx.stroke();
+            // Right Wing
+            ctx.beginPath();
+            ctx.moveTo(5, 5); ctx.lineTo(10, 50 - flap); ctx.lineTo(30, 5);
+            ctx.fill(); ctx.stroke();
+
+            ctx.restore();
+
+            // 4. Mouse Target Indicator (Only in Manual)
+            if(!pidActive) {
+                ctx.beginPath();
+                ctx.arc(drone.x, inputY, 5, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+                ctx.fill();
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        setInterval(updatePhysics, 16); // 60 FPS Physics
+        draw(); // Drawing Loop
+
+    </script>
+</body>
+</html>
+
